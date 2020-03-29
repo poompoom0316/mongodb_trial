@@ -7,6 +7,7 @@ import pymongo
 from pymongo import MongoClient
 import os
 import glob
+import papermill as pm
 
 client = MongoClient('localhost', 27017)
 
@@ -163,17 +164,19 @@ def setting_db():
 def mongod_trial(infile, dir_out="analysis/mdb_test_out"):
     # dbの中にあるリストを結合
     pipeline = [
+        {"$match": {'item_identifier': 'sp'}},
+        {"$unwind": "$collection"},
         {
             "$lookup": {
-                "from": "exp_item", "localField": "item_name", "foreignField": "item_name", "as": "exp_item"
+                "from": "exp_item", "localField": "collection.item_name", "foreignField": "item_name", "as": "exp_item"
             }
         },
         {"$unwind": "$exp_item"},
-        { "$match":{'item_identifier': 'pl'}},
         {
-            "$project": {"collection._id": 1, "collection.log_name": 1, "collection.item_name": 1, "collection.input_order": 1, "data_type": "$exp_item.data_type",
-                         "collection.scale": "$exp_item.scale", "collection.index_name": 1,
-                         "collection_name": "$exp_item.collection_name", "collection.index_number": 1,
+            "$project": {"log_name": "$collection.log_name", "item_name": "$collection.item_name",
+                         "input_order": "$collection.input_order", "data_type": "$exp_item.data_type",
+                         "scale": "$exp_item.scale", "index_name": "$collection.index_name",
+                         "collection_name": "$exp_item.collection_name", "index_number": "$collection.index_number",
                          }
         }]
 
@@ -206,7 +209,7 @@ def mongod_trial(infile, dir_out="analysis/mdb_test_out"):
 
         if len(li) > 0:
             ldbi = [k for k in db[db_name_correspo].find({'item_identifier': ki})][0]['collection_name']
-            dbi_item = pd.DataFrame([doc for doc in (db[ldbi].aggregate(pipeline))]
+            dbi_item = pd.DataFrame([doc for doc in (db[db_name_correspo].aggregate(pipeline))]
                                     ).sort_values(by="input_order")
             # もしto_be_separatedがlogに含まれているならばデータを分割する
 
@@ -309,6 +312,37 @@ def updated_to_db(dir_out="analysis/mdb_test_out"):
     result = pd.DataFrame([k for k in db[phenotype_collection].find()])
     result['_id'] = result['_id'].astype(str)
     result.to_excel(f"{dir_out}/phenotype.xlsx")
+
+
+def make_report_notebook():
+    import subprocess
+    """
+    出力したデータのファイルからサマリーレポートをノートブックのhtml形式で出力する
+    :return:
+    """
+
+    """
+    Agenda:
+    1. アイテムごとに要約統計量とデータ数を出す
+    以下、アイテムごとに（tabでわけられるとなお良い）
+    2. データをプロット（violin plotか箱ひげ図）
+    3. プロットごとの要約統計量の記述
+    """
+    input_nb_path = "summary_report_template.ipynb"
+    output_dir_path = "analysis/mdb_test_out"
+    output_nb_path = f"{output_dir_path}/summary_report.ipynb"
+    output_html_path = f"summary_report.html"
+
+    data_path1 = "analysis/mdb_test_out/phenotype.xlsx"
+
+    pm.execute_notebook(
+        input_nb_path,
+        output_nb_path,
+        parameters=dict(data_path=data_path1)
+    )
+
+    command = f"jupyter nbconvert --to 'hide_code_html' {output_nb_path} --output {output_html_path}"
+    subprocess.call(command, shell=True)
 
 
 def main():
